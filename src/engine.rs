@@ -107,7 +107,8 @@ impl Default for Settings {
 
 // ───────────────────────── public API types ─────────────────────────
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Deserialize)]
+#[serde(default)]
 pub struct NewDownload {
     /// Primary URL first, then mirrors of the same file.
     pub urls: Vec<String>,
@@ -119,7 +120,8 @@ pub struct NewDownload {
     pub start_in_secs: u64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct View {
     pub id: u64,
     pub name: String,
@@ -142,7 +144,8 @@ pub struct View {
     pub ranges: bool,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Snapshot {
     pub items: Vec<View>,
     pub total_speed: f64,

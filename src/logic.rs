@@ -252,6 +252,48 @@ pub fn extract_links(html: &str) -> Vec<String> {
     out
 }
 
+/// Every http(s) token inside arbitrary text (shared messages often wrap the link in prose).
+pub fn urls_in(text: &str) -> Vec<String> {
+    text.split_whitespace()
+        .map(|t| t.trim_matches(|c: char| matches!(c, '"' | '\'' | '<' | '>' | ',' | ')' | '(')))
+        .filter(|t| {
+            let l = t.to_ascii_lowercase();
+            l.starts_with("http://") || l.starts_with("https://")
+        })
+        .map(|t| t.to_string())
+        .collect()
+}
+
+/// Text box → download jobs. One line per file; `a | b` makes `b` a mirror of `a`;
+/// a single link with `[001-020]` expands to a numbered batch. Each job is [primary, mirrors…].
+pub fn parse_lines(text: &str) -> Vec<Vec<String>> {
+    let mut jobs: Vec<Vec<String>> = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let parts: Vec<String> = line
+            .split('|')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                if s.to_ascii_lowercase().starts_with("http") {
+                    s
+                } else {
+                    urls_in(&s).into_iter().next().unwrap_or(s)
+                }
+            })
+            .collect();
+        if parts.len() == 1 {
+            jobs.extend(expand_sequence(&parts[0]).into_iter().map(|u| vec![u]));
+        } else if !parts.is_empty() {
+            jobs.push(parts);
+        }
+    }
+    jobs
+}
+
 // ───────────────────────── HTTP helpers ─────────────────────────
 
 /// `bytes 0-0/12345` → (start, end, Some(total)); total is None for `*`.
@@ -530,5 +572,26 @@ mod tests {
         assert_eq!(format_eta(125), "2m 05s");
         assert_eq!(format_eta(3725), "1h 02m");
         assert_eq!(format_speed(2048.0), "2.00 KB/s");
+    }
+
+    #[test]
+    fn text_to_jobs() {
+        assert_eq!(
+            urls_in("check this (https://a.b/x.zip), or <http://c.d/y>"),
+            vec!["https://a.b/x.zip", "http://c.d/y"]
+        );
+        let jobs = parse_lines(
+            "https://a/f[1-2].bin\n\n https://m1/x | https://m2/x \nlook https://z/q.iso now",
+        );
+        assert_eq!(
+            jobs,
+            vec![
+                vec!["https://a/f1.bin"],
+                vec!["https://a/f2.bin"],
+                vec!["https://m1/x", "https://m2/x"],
+                vec!["https://z/q.iso"],
+            ]
+        );
+        assert!(parse_lines("  \n").is_empty());
     }
 }

@@ -1,0 +1,74 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Rust unit tests
+        run: cargo test --lib
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install NDK (SDK is preinstalled on the runner)
+        run: |
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKM="$(ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | sort -V | tail -1)"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "ndk;26.3.11579264"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.3.11579264" >> "$GITHUB_ENV"
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Build Rust core for Android
+        run: >
+          cargo ndk
+          -t arm64-v8a -t armeabi-v7a -t x86_64
+          -o android/app/src/main/jniLibs
+          build --release
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.10.2
+
+      - name: Build APK
+        working-directory: android
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_BASE64 }}
+          SECRET_STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          SECRET_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          SECRET_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          export KEYSTORE_FILE="$RUNNER_TEMP/release.jks"
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$KEYSTORE_FILE"
+            export KEYSTORE_PASSWORD="$SECRET_STORE_PASSWORD" KEY_ALIAS="$SECRET_KEY_ALIAS" KEY_PASSWORD="$SECRET_KEY_PASSWORD"
+          else
+            echo "No signing secrets set: using the keystore committed in the repo, so every build has the same signature and installs over the last one."
+            cp rustget-release.jks "$KEYSTORE_FILE"
+            export KEYSTORE_PASSWORD=rustgetpw KEY_ALIAS=rustget KEY_PASSWORD=rustgetpw
+          fi
+          gradle assembleRelease --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RustGet-apk
+          path: android/app/build/outputs/apk/release/*.apk
